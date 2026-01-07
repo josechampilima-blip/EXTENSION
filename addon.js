@@ -50,5 +50,6 @@ builder.defineStreamHandler(async ({ type, id }) => {
     return { streams: [] };
 });
 
-serveHTTP(builder.getInterface(), { port: 7000 });
-console.log("Addon active on http://localhost:7000");
+const port = process.env.PORT || 7000;
+serveHTTP(builder.getInterface(), { port });
+console.log(`Addon active on: ${process.env.PUBLIC_URL || `http://localhost:${port}`}`);

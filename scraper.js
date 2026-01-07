@@ -1,26 +1,33 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 
-const TARGET_URL = "https://www.wow.xxx/es/";
+const TARGET_URL = process.env.TARGET_URL;
 
-async function scrapeVideos(skip = 0) {
+async function scrapeVideos(skip = 0, query = null) {
     try {
-        // Pagination logic
-        // Page 1: skip 0. Page 2: skip 24 approx (site shows ~24-36 items).
-        // URL pattern: https://www.wow.xxx/es/latest-updates/2/
-
         let page = 1;
         if (skip > 0) {
             page = Math.floor(skip / 24) + 1;
         }
 
         let url = TARGET_URL;
-        if (page > 1) {
-            url = `https://www.wow.xxx/es/latest-updates/${page}/`;
+        if (query) {
+            const formattedQuery = query.trim().replace(/\s+/g, '-');
+            const encodedQuery = encodeURIComponent(formattedQuery);
+            url = `${encodedQuery}/search/${encodedQuery}/relevance/`;
+            if (page > 1) {
+                url += `${page}/`;
+            }
+        } else if (page > 1) {
+            url = `${encodedQuery}/latest-updates/${page}/`;
         }
 
         console.log(`Scraping page ${page} (${url})...`);
-        const response = await axios.get(url);
+        const response = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        });
         const $ = cheerio.load(response.data);
         const videos = [];
 
@@ -90,17 +97,51 @@ async function getStream(id) {
             if (match) embedUrl = match[1];
         }
 
+        // 1. Try to get direct <source> tags from the main page first
+        const streams = [];
+        $('source').each((i, el) => {
+            const src = $(el).attr('src');
+            const label = $(el).attr('label') || 'MP4';
+            if (src && src.includes('get_file')) {
+                streams.push({
+                    title: label,
+                    url: src,
+                    behaviorHints: { notWebReady: false }
+                });
+            }
+        });
+
+        if (streams.length > 0) {
+            console.log(`Found ${streams.length} sources directly on page.`);
+            // Sort to put 720p first
+            streams.sort((a, b) => {
+                if (a.title.toLowerCase().includes('720p')) return -1;
+                if (b.title.toLowerCase().includes('720p')) return 1;
+                return 0;
+            });
+            return streams;
+        }
+
+        // 2. Fallback to embed logic if no direct sources found
         if (embedUrl) {
             console.log(`Found embed URL: ${embedUrl}`);
             try {
-                const embedResponse = await axios.get(embedUrl, {
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                        'Referer': url
-                    }
-                });
+                const videoIdMatch = embedUrl.match(/\/embed\/(\d+)/);
+                const videoId = videoIdMatch ? videoIdMatch[1] : null;
 
-                const flashvarsMatch = embedResponse.data.match(/var flashvars = \{([\s\S]+?)\};/);
+                let headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Referer': url
+                };
+
+                if (videoId) {
+                    headers['Cookie'] = `kt_rt_videoQuality_${videoId}=720p; kt_rt_videoQuality=720p`;
+                    console.log(`Setting quality cookie for ID ${videoId}`);
+                }
+
+                const embedResponse = await axios.get(embedUrl, { headers });
+                const flashvarsMatch = embedResponse.data.match(/var\s+flashvars\s*=\s*\{([\s\S]+?)\};/);
+
                 if (flashvarsMatch) {
                     const block = flashvarsMatch[1];
                     const getValue = (key) => {
@@ -109,30 +150,44 @@ async function getStream(id) {
                         return m ? m[1] : null;
                     };
 
-                    // Only look for the reliable 480p link as requested
-                    const alt1 = getValue('video_alt_url');
-                    const alt1Label = getValue('video_alt_url_text') || '480p';
+                    const embedStreams = [];
+                    const keys = [
+                        { url: 'video_url', text: 'video_url_text', default: 'Default' },
+                        { url: 'video_alt_url', text: 'video_alt_url_text', default: '480p' },
+                        { url: 'video_alt_url2', text: 'video_alt_url2_text', default: '720p' },
+                        { url: 'video_alt_url3', text: 'video_alt_url3_text', default: '1080p' }
+                    ];
 
-                    if (alt1 && alt1.includes('get_file')) {
-                        return {
-                            title: `${alt1Label}`,
-                            url: alt1,
-                            behaviorHints: { notWebReady: false }
-                        };
+                    for (const key of keys) {
+                        const videoUrl = getValue(key.url);
+                        if (videoUrl && videoUrl.includes('get_file')) {
+                            const label = getValue(key.text) || key.default;
+                            embedStreams.push({
+                                title: label,
+                                url: videoUrl,
+                                behaviorHints: { notWebReady: false }
+                            });
+                        }
+                    }
+
+                    if (embedStreams.length > 0) {
+                        // Sort to put 720p first if available
+                        embedStreams.sort((a, b) => {
+                            if (a.title.toLowerCase().includes('720p')) return -1;
+                            if (b.title.toLowerCase().includes('720p')) return 1;
+                            return 0;
+                        });
+                        console.log(`Found ${embedStreams.length} quality options.`);
+                        return embedStreams;
                     }
                 }
             } catch (embedError) {
                 console.error("Error scraping embed page:", embedError.message);
             }
-
-            // Fallback
-            return {
-                title: 'Ver en Web',
-                externalUrl: embedUrl
-            };
         }
 
-        return null;
+        return embedUrl ? { title: 'Ver en Web', externalUrl: embedUrl } : null;
+
     } catch (error) {
         console.error("Error getting stream:", error.message);
         return null;

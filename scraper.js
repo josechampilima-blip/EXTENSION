@@ -1,9 +1,7 @@
-import { gotScraping } from 'got-scraping';
-import * as cheerio from 'cheerio';
+const axios = require('axios');
+const cheerio = require('cheerio');
 
-const TARGET_URL = process.env.TARGET_URL && process.env.TARGET_URL.endsWith('/')
-    ? process.env.TARGET_URL
-    : (process.env.TARGET_URL + '/');
+const TARGET_URL = process.env.TARGET_URL || 'https://www.wow.xxx/es/';
 
 async function scrapeVideos(skip = 0, query = null) {
     try {
@@ -24,20 +22,13 @@ async function scrapeVideos(skip = 0, query = null) {
             url += `latest-updates/${page}/`;
         }
 
-        console.log(`Scraping page ${page} (${url}) with got-scraping...`);
-
-        const response = await gotScraping({
-            url: url,
-            headerGeneratorOptions: {
-                browsers: [
-                    { name: 'chrome', minVersion: 120 },
-                ],
-                devices: ['desktop'],
-                locales: ['es-ES', 'es'],
+        console.log(`Scraping page ${page} (${url})...`);
+        const response = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
         });
-
-        const $ = cheerio.load(response.body);
+        const $ = cheerio.load(response.data);
         const videos = [];
 
         $('.item').each((index, element) => {
@@ -73,14 +64,7 @@ async function scrapeVideos(skip = 0, query = null) {
         return videos;
 
     } catch (error) {
-        if (error.response) {
-            console.error(`Error scraping: Request failed with status code ${error.response.statusCode}`);
-            if (error.response.statusCode === 403) {
-                console.error("403 Forbidden: Cloudflare is still blocking the request despite got-scraping.");
-            }
-        } else {
-            console.error("Error scraping:", error.message);
-        }
+        console.error("Error scraping:", error.message);
         return [];
     }
 }
@@ -93,16 +77,12 @@ async function getStream(id) {
         const url = Buffer.from(encodedUrl, 'base64').toString('ascii');
         console.log(`Fetching stream for URL: ${url}`);
 
-        const response = await gotScraping({
-            url: url,
-            headerGeneratorOptions: {
-                browsers: [{ name: 'chrome', minVersion: 120 }],
-                devices: ['desktop'],
-                locales: ['es-ES', 'es'],
+        const response = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
         });
-
-        const $ = cheerio.load(response.body);
+        const $ = cheerio.load(response.data);
 
         let embedUrl = '';
         $('script[type="application/ld+json"]').each((i, el) => {
@@ -113,10 +93,11 @@ async function getStream(id) {
         });
 
         if (!embedUrl) {
-            const match = response.body.match(/embedUrl\s*[:=]\s*["']([^"']+)["']/);
+            const match = response.data.match(/embedUrl\s*[:=]\s*["']([^"']+)["']/);
             if (match) embedUrl = match[1];
         }
 
+        // 1. Try to get direct <source> tags from the main page first
         const streams = [];
         $('source').each((i, el) => {
             const src = $(el).attr('src');
@@ -132,6 +113,7 @@ async function getStream(id) {
 
         if (streams.length > 0) {
             console.log(`Found ${streams.length} sources directly on page.`);
+            // Sort to put 720p first
             streams.sort((a, b) => {
                 if (a.title.toLowerCase().includes('720p')) return -1;
                 if (b.title.toLowerCase().includes('720p')) return 1;
@@ -140,31 +122,25 @@ async function getStream(id) {
             return streams;
         }
 
+        // 2. Fallback to embed logic if no direct sources found
         if (embedUrl) {
             console.log(`Found embed URL: ${embedUrl}`);
             try {
                 const videoIdMatch = embedUrl.match(/\/embed\/(\d+)/);
                 const videoId = videoIdMatch ? videoIdMatch[1] : null;
 
-                const headers = {
+                let headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                     'Referer': url
                 };
 
                 if (videoId) {
                     headers['Cookie'] = `kt_rt_videoQuality_${videoId}=720p; kt_rt_videoQuality=720p`;
+                    console.log(`Setting quality cookie for ID ${videoId}`);
                 }
 
-                const embedResponse = await gotScraping({
-                    url: embedUrl,
-                    headers: headers,
-                    headerGeneratorOptions: {
-                        browsers: [{ name: 'chrome', minVersion: 120 }],
-                        devices: ['desktop'],
-                        locales: ['es-ES', 'es'],
-                    }
-                });
-
-                const flashvarsMatch = embedResponse.body.match(/var\s+flashvars\s*=\s*\{([\s\S]+?)\};/);
+                const embedResponse = await axios.get(embedUrl, { headers });
+                const flashvarsMatch = embedResponse.data.match(/var\s+flashvars\s*=\s*\{([\s\S]+?)\};/);
 
                 if (flashvarsMatch) {
                     const block = flashvarsMatch[1];
@@ -195,11 +171,13 @@ async function getStream(id) {
                     }
 
                     if (embedStreams.length > 0) {
+                        // Sort to put 720p first if available
                         embedStreams.sort((a, b) => {
                             if (a.title.toLowerCase().includes('720p')) return -1;
                             if (b.title.toLowerCase().includes('720p')) return 1;
                             return 0;
                         });
+                        console.log(`Found ${embedStreams.length} quality options.`);
                         return embedStreams;
                     }
                 }
@@ -211,13 +189,9 @@ async function getStream(id) {
         return embedUrl ? { title: 'Ver en Web', externalUrl: embedUrl } : null;
 
     } catch (error) {
-        if (error.response) {
-            console.error(`Error getting stream: Request failed with status code ${error.response.statusCode}`);
-        } else {
-            console.error("Error getting stream:", error.message);
-        }
+        console.error("Error getting stream:", error.message);
         return null;
     }
 }
 
-export { scrapeVideos, getStream };
+module.exports = { scrapeVideos, getStream };

@@ -12,7 +12,11 @@ const builder = new addonBuilder({
         {
             type: "movie",
             id: "mywebsite-movies",
-            name: "My Website Movies"
+            name: "My Website Movies",
+            extra: [
+                { name: "search", isRequired: false },
+                { name: "skip", isRequired: false }
+            ]
         }
     ]
 });
@@ -21,7 +25,8 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     console.log("Request for catalog:", type, id, extra);
     if (type === "movie" && id === "mywebsite-movies") {
         const skip = extra && extra.skip ? parseInt(extra.skip) : 0;
-        const videos = await scrapeVideos(skip);
+        const query = extra && extra.search ? extra.search : null;
+        const videos = await scrapeVideos(skip, query);
         // Ensure metas follow Stremio format
         return { metas: videos };
     }

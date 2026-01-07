@@ -1,7 +1,9 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 
-const TARGET_URL = process.env.TARGET_URL;
+const TARGET_URL = process.env.TARGET_URL && process.env.TARGET_URL.endsWith('/')
+    ? process.env.TARGET_URL
+    : (process.env.TARGET_URL + '/');
 
 async function scrapeVideos(skip = 0, query = null) {
     try {
@@ -25,7 +27,18 @@ async function scrapeVideos(skip = 0, query = null) {
         console.log(`Scraping page ${page} (${url})...`);
         const response = await axios.get(url, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+                'Referer': TARGET_URL,
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'same-origin',
+                'Sec-Fetch-User': '?1'
             }
         });
         const $ = cheerio.load(response.data);
@@ -64,7 +77,19 @@ async function scrapeVideos(skip = 0, query = null) {
         return videos;
 
     } catch (error) {
-        console.error("Error scraping:", error.message);
+        if (error.response) {
+            console.error(`Error scraping: Request failed with status code ${error.response.status}`);
+            if (error.response.status === 403) {
+                console.error("403 Forbidden: The site is likely blocking Render's IP or requires specific headers/cookies.");
+                if (error.response.headers['server'] && error.response.headers['server'].includes('cloudflare')) {
+                    console.error("Cloudflare detected. Render IPs are often blocked by Cloudflare for this site.");
+                }
+            }
+        } else if (error.request) {
+            console.error("Error scraping: No response received from server.");
+        } else {
+            console.error("Error scraping:", error.message);
+        }
         return [];
     }
 }
@@ -79,7 +104,10 @@ async function getStream(id) {
 
         const response = await axios.get(url, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+                'Referer': TARGET_URL
             }
         });
         const $ = cheerio.load(response.data);
@@ -130,7 +158,8 @@ async function getStream(id) {
                 const videoId = videoIdMatch ? videoIdMatch[1] : null;
 
                 let headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
                     'Referer': url
                 };
 
@@ -189,7 +218,11 @@ async function getStream(id) {
         return embedUrl ? { title: 'Ver en Web', externalUrl: embedUrl } : null;
 
     } catch (error) {
-        console.error("Error getting stream:", error.message);
+        if (error.response) {
+            console.error(`Error getting stream: Request failed with status code ${error.response.status} for URL: ${error.config.url}`);
+        } else {
+            console.error("Error getting stream:", error.message);
+        }
         return null;
     }
 }

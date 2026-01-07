@@ -14,12 +14,12 @@ async function scrapeVideos(skip = 0, query = null) {
         if (query) {
             const formattedQuery = query.trim().replace(/\s+/g, '-');
             const encodedQuery = encodeURIComponent(formattedQuery);
-            url = `${encodedQuery}/search/${encodedQuery}/relevance/`;
+            url += `search/${encodedQuery}/relevance/`;
             if (page > 1) {
                 url += `${page}/`;
             }
         } else if (page > 1) {
-            url = `${encodedQuery}/latest-updates/${page}/`;
+            url += `latest-updates/${page}/`;
         }
 
         console.log(`Scraping page ${page} (${url})...`);

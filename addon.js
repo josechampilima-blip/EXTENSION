@@ -1,5 +1,5 @@
-const { addonBuilder, serveHTTP } = require("stremio-addon-sdk");
-const { scrapeVideos, getStream } = require('./scraper');
+import { addonBuilder, serveHTTP } from "stremio-addon-sdk";
+import { scrapeVideos, getStream } from './scraper.js';
 
 const builder = new addonBuilder({
     id: "org.mywebsite.addon",
@@ -27,7 +27,6 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         const skip = extra && extra.skip ? parseInt(extra.skip) : 0;
         const query = extra && extra.search ? extra.search : null;
         const videos = await scrapeVideos(skip, query);
-        // Ensure metas follow Stremio format
         return { metas: videos };
     }
     return { metas: [] };
@@ -35,10 +34,6 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 
 builder.defineMetaHandler(async ({ type, id }) => {
     console.log("Request for meta:", type, id);
-    // Logic to get details for a specific item
-    // Ideally we should scrape details here too, but for now return minimal info
-    // or rely on catalog data if passed
-    // NOTE: Stremio often uses the catalog item as meta if not detailed here
     return { meta: { id, type: 'movie' } };
 });
 
@@ -55,6 +50,6 @@ builder.defineStreamHandler(async ({ type, id }) => {
     return { streams: [] };
 });
 
-const port = process.env.PORT;
+const port = process.env.PORT || 3000;
 serveHTTP(builder.getInterface(), { port });
 console.log(`Addon active on: ${process.env.PUBLIC_URL || `http://localhost:${port}`}`);
